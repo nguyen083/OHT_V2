@@ -1,8 +1,10 @@
 import type { TelemetryRegister } from '@/types'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQueryClient } from '@tanstack/react-query'
 import { ChevronRight } from 'lucide-react'
 import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
+import toast from 'react-hot-toast'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
 import {
@@ -16,7 +18,7 @@ import {
 import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useUpdateTelemetryMutation } from '@/hooks/module'
+import { TELEMETRY_QUERY_KEY, useUpdateTelemetryMutation } from '@/hooks/module'
 
 interface Props {
   open: boolean
@@ -25,6 +27,7 @@ interface Props {
   moduleAddress: number
 }
 export default function EditValueRegisterDialog({ open, setOpen, register, moduleAddress }: Props) {
+  const queryClient = useQueryClient()
   const { mutate: updateTelemetry, isPending } = useUpdateTelemetryMutation()
 
   const FormSchema = z.object({
@@ -43,6 +46,14 @@ export default function EditValueRegisterDialog({ open, setOpen, register, modul
       value: Number(data.value),
       register_address: register.address,
       force: false,
+    }, {
+      onSuccess: () => {
+        toast.success('Telemetry updated successfully')
+        queryClient.invalidateQueries({ queryKey: [TELEMETRY_QUERY_KEY, moduleAddress] })
+      },
+      onError: () => {
+        toast.error('Failed to update telemetry')
+      },
     })
     setOpen(false)
   }
@@ -51,7 +62,7 @@ export default function EditValueRegisterDialog({ open, setOpen, register, modul
     if (open) {
       form.reset()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   return (
