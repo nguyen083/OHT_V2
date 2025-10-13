@@ -1,30 +1,27 @@
 """
-Database configuration and connection management
+Database configuration and connection management - Phase 3 Enhanced
+Multi-environment database support with PostgreSQL production readiness
 """
 
 from typing import AsyncGenerator, Dict, Any
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import declarative_base
 from contextlib import asynccontextmanager
+import logging
 
 from app.config import settings
+from app.core.database_config import get_database_config
 
-# Create async engine with optimized connection pooling
-engine = create_async_engine(
-    settings.database_url,
-    echo=settings.debug,
-    poolclass=NullPool,  # Use NullPool for async SQLite
-)
+logger = logging.getLogger(__name__)
 
-# Create async session factory
-AsyncSessionLocal = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autoflush=False,
-    autocommit=False,
-)
+# Get database configuration for current environment
+db_config = get_database_config()
+
+# Create async engine with environment-specific configuration
+engine = db_config.create_engine()
+
+# Create async session factory with optimized settings
+AsyncSessionLocal = db_config.create_session_factory(engine)
 
 # Base class for models
 Base = declarative_base()
@@ -86,30 +83,92 @@ async def close_db():
         print(f"Error closing database connections: {e}")
 
 
-# Health check function
+# Enhanced health check function
 async def check_db_health() -> Dict[str, Any]:
-    """Check database health and connection pool status"""
+    """
+    Comprehensive database health check and connection pool status
+    Phase 3: Enhanced with multi-environment support and detailed metrics
+    """
     try:
+        import time
         from sqlalchemy import text
-        async with engine.begin() as conn:
-            await conn.run_sync(lambda sync_conn: sync_conn.execute(text("SELECT 1")))
+        from app.core.database_config import get_connection_info
         
-        # Get pool status (simplified to avoid type issues)
+        # Measure connection time
+        start_time = time.time()
+        
+        async with engine.begin() as conn:
+            # Test basic connectivity
+            await conn.run_sync(lambda sync_conn: sync_conn.execute(text("SELECT 1")))
+            
+            # Test database-specific features
+            if "postgresql" in str(engine.url):
+                # PostgreSQL-specific health checks
+                result = await conn.run_sync(
+                    lambda sync_conn: sync_conn.execute(
+                        text("SELECT version(), current_database(), current_user")
+                    ).fetchone()
+                )
+                db_info = {
+                    "database_type": "PostgreSQL",
+                    "version": result[0] if result else "Unknown",
+                    "database_name": result[1] if result else "Unknown",
+                    "user": result[2] if result else "Unknown"
+                }
+            else:
+                # SQLite health checks
+                result = await conn.run_sync(
+                    lambda sync_conn: sync_conn.execute(text("PRAGMA database_list")).fetchall()
+                )
+                db_info = {
+                    "database_type": "SQLite",
+                    "databases": len(result) if result else 0,
+                    "main_db": result[0][2] if result and len(result) > 0 else "Unknown"
+                }
+        
+        connection_time = time.time() - start_time
+        
+        # Get enhanced pool status
+        pool = engine.pool
         pool_status = {
-            "pool_size": getattr(engine.pool, 'size', lambda: 0)(),
-            "checked_in": getattr(engine.pool, 'checkedin', lambda: 0)(),
-            "checked_out": getattr(engine.pool, 'checkedout', lambda: 0)(),
-            "overflow": getattr(engine.pool, 'overflow', lambda: 0)(),
+            "pool_size": getattr(pool, 'size', lambda: 0)(),
+            "checked_in": getattr(pool, 'checkedin', lambda: 0)(),
+            "checked_out": getattr(pool, 'checkedout', lambda: 0)(),
+            "overflow": getattr(pool, 'overflow', lambda: 0)(),
+            "invalid": getattr(pool, 'invalidated', lambda: 0)(),
         }
+        
+        # Get connection configuration info
+        connection_info = get_connection_info()
+        
+        # Calculate health score
+        health_score = 100
+        if connection_time > 1.0:  # Slow connection
+            health_score -= 20
+        if pool_status["checked_out"] / max(pool_status["pool_size"], 1) > 0.8:  # High utilization
+            health_score -= 10
+        if pool_status["invalid"] > 0:  # Invalid connections
+            health_score -= 30
+            
+        status = "healthy" if health_score >= 80 else "degraded" if health_score >= 50 else "unhealthy"
         
         return {
-            "status": "healthy",
-            "pool_status": pool_status
+            "status": status,
+            "health_score": health_score,
+            "connection_time_ms": round(connection_time * 1000, 2),
+            "database_info": db_info,
+            "pool_status": pool_status,
+            "connection_config": connection_info,
+            "timestamp": time.time()
         }
+        
     except Exception as e:
+        logger.error(f"Database health check failed: {e}")
         return {
             "status": "unhealthy",
-            "error": str(e)
+            "health_score": 0,
+            "error": str(e),
+            "timestamp": time.time()
         }
 
 

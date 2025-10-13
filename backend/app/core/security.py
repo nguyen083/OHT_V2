@@ -175,8 +175,51 @@ def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECURITY_CONFIG["jwt_secret"], algorithm=SECURITY_CONFIG["jwt_algorithm"])
     return encoded_jwt
 
+async def verify_token_async(token: str) -> Optional[Dict[str, Any]]:
+    """Verify JWT token with blacklist check (async)"""
+    try:
+        # Decode token
+        payload = jwt.decode(
+            token, 
+            SECURITY_CONFIG["jwt_secret"], 
+            algorithms=[SECURITY_CONFIG["jwt_algorithm"]]
+        )
+        
+        # Additional validation
+        if "type" not in payload:
+            logger.warning("Token missing type field")
+            return None
+            
+        if "exp" not in payload:
+            logger.warning("Token missing expiry field")
+            return None
+        
+        # Check token blacklist using DI container
+        try:
+            from app.core.container import get_service_container
+            container = get_service_container()
+            token_store = container.token_store()
+            
+            is_blacklisted = await token_store.is_token_blacklisted(token)
+            if is_blacklisted:
+                logger.warning("⚠️ Token is blacklisted (logged out)")
+                return None
+        except Exception as e:
+            # If token store check fails, continue (fail-open for availability)
+            logger.warning(f"⚠️ Token blacklist check failed: {e}")
+            
+        logger.info(f"Token verified successfully for user: {payload.get('sub')}")
+        return payload
+        
+    except ExpiredSignatureError:
+        logger.warning("JWT token has expired")
+        return None
+    except JWTError as e:
+        logger.warning(f"JWT token validation failed: {e}")
+        return None
+
 def verify_token(token: str) -> Optional[Dict[str, Any]]:
-    """Verify JWT token"""
+    """Verify JWT token (sync version for backward compatibility)"""
     try:
         payload = jwt.decode(
             token, 
