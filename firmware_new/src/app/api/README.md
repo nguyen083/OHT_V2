@@ -1,1 +1,0 @@
-# Minimal API (v1)\n\nThis directory was recreated.\n
