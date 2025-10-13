@@ -5,7 +5,7 @@ Authentication API endpoints for OHT-50 Backend
 from datetime import timedelta, datetime, timezone
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import secrets
 
 from app.core.security import (

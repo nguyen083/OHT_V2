@@ -125,14 +125,15 @@ async def test_firmware_connection(
         # Test basic connection
         start_time = time.time()
         response = await firmware_service.get_robot_status()
-        response_time = time.time() - start_time
+        response_time = (time.time() - start_time) * 1000  # Convert to ms
         
+        # Response is a dict
         return {
-            "success": response.success,
-            "response_time_ms": response.response_time_ms,
-            "firmware_connected": response.success,
-            "error": response.error if not response.success else None,
-            "circuit_breaker_state": response.circuit_breaker_state
+            "success": response.get("success", False),
+            "response_time_ms": response_time,
+            "firmware_connected": response.get("success", False),
+            "error": response.get("error") if not response.get("success") else None,
+            "circuit_breaker_state": "closed"  # Mock value
         }
         
     except Exception as e:

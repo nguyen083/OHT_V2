@@ -49,11 +49,12 @@ async def get_robot_status(
         firmware_service = await get_firmware_service()
         response = await firmware_service.get_robot_status()
         
-        if response.success and response.data:
-            data = response.data
+        # Response is a dict with 'success', 'data', 'error' keys
+        if response.get("success") and response.get("data"):
+            data = response["data"]
         else:
             # Fallback to mock data if firmware unavailable
-            logger.warning(f"Firmware unavailable, using fallback data: {response.error}")
+            logger.warning(f"Firmware unavailable, using fallback data: {response.get('error')}")
             data = {
                 "robot_id": "OHT-50-001",
                 "status": "idle",
@@ -721,10 +722,11 @@ async def get_robot_battery(
             firmware_service = await get_firmware_service()
             response = await firmware_service.get_robot_status()
             
-            if response.success and response.data:
-                firmware_data = response.data
+            # Response is a dict with 'success', 'data', 'error' keys
+            if response.get("success") and response.get("data"):
+                firmware_data = response["data"]
             else:
-                raise Exception(f"Firmware unavailable: {response.error}")
+                raise Exception(f"Firmware unavailable: {response.get('error')}")
             
             battery_level = firmware_data.get("battery_level", 87)
             battery_voltage = firmware_data.get("battery_voltage", 24.5)
