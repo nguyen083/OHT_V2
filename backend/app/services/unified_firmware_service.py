@@ -1,6 +1,7 @@
 """
 Unified Firmware Service - OHT-50
 Tích hợp tất cả firmware communication với circuit breaker, retry và metrics
+Implements IFirmwareService interface for clean architecture
 """
 
 from dataclasses import dataclass, field
@@ -18,6 +19,7 @@ from app.core.retry_manager import RetryManager
 from app.core.firmware_metrics import FirmwareMetrics
 from app.config import settings
 from app.services.firmware_cache import get_firmware_cache
+from app.domain.interfaces.firmware_service import IFirmwareService
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +32,14 @@ class FirmwareResponse:
     response_time_ms: float = 0.0
     circuit_breaker_state: Optional[str] = None
 
-class UnifiedFirmwareService:
+class UnifiedFirmwareService(IFirmwareService):
     """
     Unified Firmware Service với circuit breaker, retry và metrics
     Thay thế tất cả firmware integration services
+    Implements IFirmwareService interface
     """
     
-    def __init__(self, firmware_url: str = None):
+    def __init__(self, firmware_url: str = None, cache_service=None):
         self.firmware_url = firmware_url or settings.firmware_url
         
         # Optimized HTTP client với connection pooling
@@ -70,8 +73,8 @@ class UnifiedFirmwareService:
         
         logger.info("UnifiedFirmwareService initialized với firmware_url: %s", self.firmware_url)
     
-    async def get_robot_status(self) -> FirmwareResponse:
-        """Get robot status với circuit breaker và retry (cached)"""
+    async def get_robot_status_raw(self) -> FirmwareResponse:
+        """Get robot status (returns FirmwareResponse for backward compatibility)"""
         cache = await get_firmware_cache()
         async def fetch():
             return await self._http_get("/api/v1/robot/status")
@@ -85,16 +88,36 @@ class UnifiedFirmwareService:
                 lambda: self._http_get("/api/v1/robot/status")
             )
     
-    async def send_robot_command(self, command: Dict[str, Any]) -> FirmwareResponse:
-        """Send robot command với validation"""
+    async def get_robot_status(self) -> Dict[str, Any]:
+        """Get robot status (IFirmwareService interface)"""
+        response = await self.get_robot_status_raw()
+        return {
+            "success": response.success,
+            "data": response.data,
+            "error": response.error,
+            "timestamp": response.timestamp.isoformat()
+        }
+    
+    async def send_robot_command_raw(self, command: Dict[str, Any]) -> FirmwareResponse:
+        """Send robot command (returns FirmwareResponse for backward compatibility)"""
         self._validate_command(command)
         return await self._execute_with_protection(
             "robot_command", 
             lambda: self._http_post("/api/v1/robot/command", command)
         )
     
-    async def emergency_stop(self) -> FirmwareResponse:
-        """Emergency stop với highest priority"""
+    async def send_robot_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Send robot command (IFirmwareService interface)"""
+        response = await self.send_robot_command_raw(command)
+        return {
+            "success": response.success,
+            "command": command,
+            "result": response.data,
+            "error": response.error
+        }
+    
+    async def emergency_stop_raw(self) -> FirmwareResponse:
+        """Emergency stop (returns FirmwareResponse for backward compatibility)"""
         return await self._execute_with_protection(
             "emergency_stop",
             lambda: self._http_post("/api/v1/robot/emergency-stop", {
@@ -104,7 +127,17 @@ class UnifiedFirmwareService:
             priority="emergency"
         )
     
-    async def get_telemetry_data(self) -> FirmwareResponse:
+    async def emergency_stop(self) -> Dict[str, Any]:
+        """Emergency stop (IFirmwareService interface)"""
+        response = await self.emergency_stop_raw()
+        return {
+            "success": response.success,
+            "data": response.data,
+            "error": response.error,
+            "timestamp": response.timestamp.isoformat()
+        }
+    
+    async def get_telemetry_data_raw(self) -> FirmwareResponse:
         """Get telemetry data với caching"""
         cache = await get_firmware_cache()
         async def fetch():
@@ -117,6 +150,16 @@ class UnifiedFirmwareService:
                 "telemetry",
                 lambda: self._http_get("/api/v1/telemetry/current")
             )
+    
+    async def get_telemetry_data(self) -> Dict[str, Any]:
+        """Get telemetry data (IFirmwareService interface)"""
+        response = await self.get_telemetry_data_raw()
+        return {
+            "success": response.success,
+            "data": response.data,
+            "error": response.error,
+            "timestamp": response.timestamp.isoformat()
+        }
 
     async def get_robot_position(self) -> Dict[str, Any]:
         """Get robot position từ Firmware"""
@@ -375,6 +418,87 @@ class UnifiedFirmwareService:
             "connection_status": self.connection_status,
             "firmware_url": self.firmware_url
         }
+    
+    # IBaseService interface implementation
+    async def initialize(self) -> bool:
+        """Initialize firmware service"""
+        try:
+            # Service is initialized in __init__, just test connection
+            logger.info("✅ UnifiedFirmwareService initialized")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Firmware service initialization failed: {e}")
+            return False
+    
+    async def shutdown(self) -> bool:
+        """Shutdown firmware service"""
+        try:
+            await self.close()
+            return True
+        except Exception as e:
+            logger.error(f"❌ Firmware service shutdown failed: {e}")
+            return False
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """Health check for IBaseService interface"""
+        health_status = self.get_health_status()
+        
+        return {
+            "healthy": health_status["firmware_connected"],
+            "status": "healthy" if health_status["firmware_connected"] else "unhealthy",
+            "details": health_status
+        }
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get service status for IBaseService interface"""
+        return {
+            "service_name": "UnifiedFirmwareService",
+            "version": "2.0.0",
+            "state": "running" if self.is_connected() else "stopped",
+            "uptime": 0,
+            "metadata": {
+                "firmware_url": self.firmware_url,
+                "circuit_breaker_state": self.circuit_breaker.state.value
+            }
+        }
+    
+    def get_connection_status(self) -> Dict[str, Any]:
+        """Get firmware connection status (IFirmwareService interface)"""
+        return {
+            "connected": self.is_connected(),
+            "status": "connected" if self.is_connected() else "disconnected",
+            "firmware_url": self.firmware_url,
+            "last_heartbeat": self.last_heartbeat.isoformat() if self.last_heartbeat else None,
+            "error": None if self.is_connected() else "Firmware not connected"
+        }
+    
+    async def get_battery_status(self) -> Dict[str, Any]:
+        """Get battery status from firmware"""
+        try:
+            response = await self._execute_with_protection(
+                "battery_status",
+                lambda: self._http_get("/api/v1/robot/battery")
+            )
+            
+            if response.success:
+                return {
+                    "success": True,
+                    "data": response.data,
+                    "timestamp": response.timestamp.isoformat()
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": response.error,
+                    "timestamp": response.timestamp.isoformat()
+                }
+        except Exception as e:
+            logger.error(f"❌ Get battery status failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
     
     async def close(self):
         """Close HTTP client"""

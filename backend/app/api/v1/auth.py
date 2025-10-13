@@ -5,7 +5,7 @@ Authentication API endpoints for OHT-50 Backend
 from datetime import timedelta, datetime, timezone
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import secrets
 
 from app.core.security import (
@@ -18,6 +18,7 @@ from app.core.security import (
     verify_token
 )
 from app.core.database import get_db
+from app.core.container import get_service_container
 from app.models.user import User
 from app.schemas.auth import (
     LoginRequest,
@@ -326,15 +327,36 @@ async def get_current_user_info(
 
 @router.post("/logout", response_model=LogoutResponse)
 async def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
     current_user: User = Depends(get_current_user)
 ):
-    """User logout endpoint"""
-    # In a real implementation, you would blacklist the token
-    # For now, we'll just return success
-    return LogoutResponse(
-        success=True,
-        message="Logged out successfully"
-    )
+    """User logout endpoint with Redis token blacklist"""
+    try:
+        # Get token from credentials
+        token = credentials.credentials
+        
+        # Get token store from DI container
+        container = get_service_container()
+        token_store = container.token_store()
+        
+        # Blacklist token (expires after jwt_expiry seconds)
+        settings_obj = container.settings()
+        await token_store.blacklist_token(token, expiry=settings_obj.jwt_expiry)
+        
+        logger.info(f"✅ User {current_user.username} logged out, token blacklisted")
+        
+        return LogoutResponse(
+            success=True,
+            message="Logged out successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Logout failed: {e}")
+        # Still return success even if blacklist fails
+        return LogoutResponse(
+            success=True,
+            message="Logged out successfully"
+        )
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
