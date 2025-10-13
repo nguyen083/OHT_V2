@@ -26,8 +26,8 @@
 **/oht50_main
 **/*.exe
 
-# Core dumps
-**/core
+# Core dumps (chỉ file, KHÔNG ignore thư mục app/core/)
+# **/core - REMOVED: gây ignore thư mục backend/app/core/
 **/core.*
 **/*.core
 
@@ -67,7 +67,7 @@
 **/*.db
 **/*.sqlite
 **/*.sqlite3
-**/oht50.db
+
 **/test.db
 
 # Environment variables
